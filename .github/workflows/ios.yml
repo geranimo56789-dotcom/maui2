@@ -1,0 +1,58 @@
+name: iOS Build - MAUI2 Simple Hello World
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  build-ios:
+    runs-on: macos-14
+    timeout-minutes: 60
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+        
+    - name: Install MAUI Workloads
+      run: |
+        echo "Installing MAUI workloads..."
+        dotnet workload install maui --skip-sign-check
+        dotnet workload install maui-ios --skip-sign-check
+        dotnet workload install maui-android --skip-sign-check
+        dotnet workload install maui-maccatalyst --skip-sign-check
+        echo "MAUI workloads installed successfully!"
+        
+    - name: List installed workloads
+      run: dotnet workload list
+      
+    - name: Restore dependencies
+      run: dotnet restore
+      
+    - name: Build iOS for Simulator 
+      run: |
+        echo "Building iOS for Simulator with dotnet build (NOT publish)"
+        dotnet build --framework net8.0-ios --configuration Release /p:RuntimeIdentifier=iossimulator-x64 --verbosity normal
+        
+    - name: List build outputs
+      run: |
+        echo "Searching for build outputs..."
+        find . -name "*.app" -type d 2>/dev/null || echo "No .app directories found"
+        find . -name "*.ipa" -type f 2>/dev/null || echo "No .ipa files found"
+        ls -la bin/ 2>/dev/null || echo "No bin directory found"
+        
+    - name: Upload iOS Build Artifacts
+      uses: actions/upload-artifact@v4
+      if: success()
+      with:
+        name: ios-simulator-build
+        path: |
+          bin/**/*.app
+          **/*.ipa
+        retention-days: 7
