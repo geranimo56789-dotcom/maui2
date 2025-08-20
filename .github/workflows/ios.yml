@@ -1,58 +1,124 @@
-name: iOS Build - MAUI2 Simple Hello World
+﻿name: iOS Build - MAUI2 Enhanced V2
 
 on:
   push:
     branches: [ master, main ]
   pull_request:
     branches: [ master, main ]
+  workflow_dispatch:
 
 jobs:
   build-ios:
     runs-on: macos-14
     timeout-minutes: 60
-    
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Setup .NET
+    - name: Show environment info
+      run: |
+        echo "Runner OS: $RUNNER_OS"
+        echo "Xcode version:"
+        xcodebuild -version
+        echo "Available iOS SDKs:"
+        xcodebuild -showsdks | grep iOS
+        echo "macOS version:"
+        sw_vers
+        
+    - name: Setup .NET 8
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: 8.0.x
         
-    - name: Install MAUI Workloads
+    - name: Display .NET info
       run: |
-        echo "Installing MAUI workloads..."
-        dotnet workload install maui --skip-sign-check
-        dotnet workload install maui-ios --skip-sign-check
-        dotnet workload install maui-android --skip-sign-check
-        dotnet workload install maui-maccatalyst --skip-sign-check
-        echo "MAUI workloads installed successfully!"
+        dotnet --version
+        dotnet --info
         
-    - name: List installed workloads
-      run: dotnet workload list
-      
-    - name: Restore dependencies
-      run: dotnet restore
-      
-    - name: Build iOS for Simulator 
+    - name: Clean any existing workloads
       run: |
-        echo "Building iOS for Simulator with dotnet build (NOT publish)"
-        dotnet build --framework net8.0-ios --configuration Release /p:RuntimeIdentifier=iossimulator-x64 --verbosity normal
+        echo "Cleaning existing workloads..."
+        dotnet workload uninstall --all || true
         
-    - name: List build outputs
+    - name: Install MAUI Workloads with retry
       run: |
-        echo "Searching for build outputs..."
+        echo "Installing MAUI workloads with retry logic..."
+        for i in {1..3}; do
+          echo "Attempt $i of 3"
+          if dotnet workload install maui --skip-sign-check --verbosity diagnostic; then
+            echo "MAUI workload installed successfully"
+            break
+          else
+            echo "Attempt $i failed, retrying..."
+            sleep 10
+          fi
+        done
+        
+        echo "Installing additional iOS workloads..."
+        dotnet workload install maui-ios --skip-sign-check --verbosity diagnostic
+        dotnet workload install maui-maccatalyst --skip-sign-check --verbosity diagnostic
+        
+    - name: Verify workload installation
+      run: |
+        echo "Installed workloads:"
+        dotnet workload list
+        echo "SDK info:"
+        dotnet sdk check
+        
+    - name: Clean and restore
+      run: |
+        echo "Cleaning solution..."
+        dotnet clean --verbosity normal
+        echo "Restoring packages..."
+        dotnet restore --verbosity normal
+        
+    - name: Build iOS for Simulator (x64)
+      run: |
+        echo "Building iOS for Simulator x64..."
+        dotnet build --framework net8.0-ios \
+          --configuration Release \
+          --runtime iossimulator-x64 \
+          --verbosity normal \
+          --no-restore
+          
+    - name: Build iOS for Simulator (arm64) 
+      run: |
+        echo "Building iOS for Simulator arm64..."
+        dotnet build --framework net8.0-ios \
+          --configuration Release \
+          --runtime iossimulator-arm64 \
+          --verbosity normal \
+          --no-restore
+        
+    - name: List all build outputs
+      run: |
+        echo "=== Build Output Search ==="
+        echo "Searching for .app directories:"
         find . -name "*.app" -type d 2>/dev/null || echo "No .app directories found"
+        echo ""
+        echo "Searching for .ipa files:"
         find . -name "*.ipa" -type f 2>/dev/null || echo "No .ipa files found"
-        ls -la bin/ 2>/dev/null || echo "No bin directory found"
+        echo ""
+        echo "Listing bin directory structure:"
+        find bin -type f 2>/dev/null | head -20 || echo "No bin directory or files found"
+        echo ""
+        echo "Looking for build artifacts in common locations:"
+        find . -path "*/bin/*" -name "*.app" -type d 2>/dev/null || echo "No .app in bin/"
+        find . -path "*/obj/*" -name "*.app" -type d 2>/dev/null || echo "No .app in obj/"
         
     - name: Upload iOS Build Artifacts
       uses: actions/upload-artifact@v4
-      if: success()
+      if: always()
       with:
-        name: ios-simulator-build
+        name: ios-simulator-build-enhanced
         path: |
           bin/**/*.app
+          **/*.app
           **/*.ipa
+          bin/**/*
         retention-days: 7
+        if-no-files-found: warn
